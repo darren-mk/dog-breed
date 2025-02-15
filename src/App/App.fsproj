@@ -6,6 +6,7 @@
     <Compile Include="App.fs" />
   </ItemGroup>
   <ItemGroup>
+    <PackageReference Include="Fable.Browser.XMLHttpRequest" Version="1.4.0" />
     <PackageReference Include="Sutil" Version="2.*" />
   </ItemGroup>
   <Target Name="ReallyClean" AfterTargets="Clean">

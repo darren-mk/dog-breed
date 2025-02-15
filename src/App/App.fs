@@ -2,61 +2,115 @@ module App
 
 open Sutil
 open Sutil.CoreElements
+open Browser.Types
+open Browser
 
-type Model = { Counter : int }
+type Request = {
+    url: string
+    method: string
+    body: string }
 
-// Model helpers
-let getCounter m = m.Counter
+type Response = {
+    statusCode: int
+    body: string }
 
-type Message =
+type Deferred<'t> =
+  | HasNotStartedYet
+  | InProgress
+  | Resolved of 't
+
+type AsyncOperationStatus<'t> =
+  | Started
+  | Finished of 't
+
+type State = {
+    dogBreedsList : Deferred<Result<string, string>>
+    //DogBreedDetails : Deferred<Result<string, string>>
+    countedNumber : int }
+
+let dogBreedsListUrl =
+    "https://dog.ceo/api/breeds/list/all"
+
+let getCounter (m: State) =
+    m.countedNumber
+
+let getDogBreedsList (m: State) =
+    m.dogBreedsList
+
+type Msg =
     | Increment
     | Decrement
+    | LoadDogBreedsList of AsyncOperationStatus<Result<string, string>>
+    //| LoadDogBreedsDetails of AsyncOperationStatus<Result<string, string>>
 
-let init () : Model = { Counter = 0 }
+let init () : State * Cmd<Msg> =
+    { dogBreedsList = HasNotStartedYet
+      //DogBreedDetails = HasNotStartedYet
+      countedNumber = 0 },
+      Cmd.ofMsg (LoadDogBreedsList Started)
 
-let update (msg : Message) (model : Model) : Model =
+let httpRequest
+    (req: Request) (resph: Response -> 'Msg) : Cmd<'Msg> =
+    let command (dispatch: 'Msg -> unit) =
+        let xhr = XMLHttpRequest.Create()
+        xhr.``open``(method=req.method, url=req.url)
+        xhr.onreadystatechange <- fun _ ->
+            if xhr.readyState = ReadyState.Done
+            then
+                let response = {
+                    statusCode = xhr.status
+                    body = xhr.responseText }
+                let messageToDispatch =  resph response
+                dispatch messageToDispatch
+        xhr.send(req.body)
+    Cmd.ofEffect command
+
+let update (msg : Msg) (state : State) : State * Cmd<Msg> =
     match msg with
-    |Increment -> { model with Counter = model.Counter + 1 }
-    |Decrement -> { model with Counter = model.Counter - 1 }
+    | Increment ->
+        { state with countedNumber = state.countedNumber + 1 }
+        , Cmd.none
+    | Decrement ->
+        { state with countedNumber = state.countedNumber - 1 }
+        , Cmd.none
+    | LoadDogBreedsList Started ->
+        let nextState = {
+            state with dogBreedsList = InProgress }
+        let request = {
+            url = dogBreedsListUrl
+            method = "GET"; body = "" }
+        let responseMapper (response: Response) =
+            if response.statusCode = 200
+            then LoadDogBreedsList (Finished (Ok response.body))
+            else LoadDogBreedsList (Finished (Error "Could not load the content"))
+        nextState, httpRequest request responseMapper
+    | LoadDogBreedsList (Finished result) ->
+        let nextState = { state with dogBreedsList = Resolved result }
+        nextState, Cmd.none
 
-// In Sutil, the view() function is called *once*
+let renderCounter n =
+    text $"Counter = {n}"
+
+let renderDogBreedsList (x: Deferred<Result<string, string>>) =
+    match x with
+        | Resolved result ->
+            text $"look! {result}"
+        | _ -> text $""
+
 let view() =
-
-    // model is an IStore<ModeL>
-    // This means we can write to it if we want, but when we're adopting
-    // Elmish, we treat it like an IObservable<Model>
-    let model, dispatch = () |> Store.makeElmishSimple init update ignore
-
+    let state, dispatch =
+        () |> Store.makeElmish init update ignore
     Html.div [
-        // Get used to doing this for components, even though this is a top-level app.
-        disposeOnUnmount [ model ]
-
-        // See Sutil.Styling for more advanced styling options
-        Attr.style [
-            Css.fontFamily "Arial, Helvetica, sans-serif"
-            Css.margin 20
-        ]
-
-        // Think of this line as
-        // text $"Counter = {model.counter}"
-        Bind.el (model |> Store.map getCounter, fun n ->
-            text $"Counter = {n}" )
-
+        disposeOnUnmount [ state ]
+        Bind.el (state |> Store.map getDogBreedsList, renderDogBreedsList)
+        Html.br []
+        Bind.el (state |> Store.map getCounter, renderCounter)
         Html.div [
             Html.button [
-                Attr.className "button" // Bulma styling, included in index.html
-
-                // Dispatching is as for normal ELmish. Sutil event handlers take an extra options array though
                 Ev.onClick (fun _ -> dispatch Decrement)
-                text "-"
-            ]
-
+                text "-" ]
             Html.button [
-                Attr.className "button"
                 Ev.onClick (fun _ -> dispatch Increment)
-                text "+"
-            ]
-        ]]
+                text "+" ] ] ]
 
-// Start the app
 view() |> Program.mount
