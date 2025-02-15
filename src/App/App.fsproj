@@ -8,6 +8,7 @@
   <ItemGroup>
     <PackageReference Include="Fable.Browser.XMLHttpRequest" Version="1.4.0" />
     <PackageReference Include="Sutil" Version="2.*" />
+    <PackageReference Include="Thoth.Json" Version="10.4.1" />
   </ItemGroup>
   <Target Name="ReallyClean" AfterTargets="Clean">
     <!-- Remove obj folder -->

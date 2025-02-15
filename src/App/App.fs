@@ -4,6 +4,7 @@ open Sutil
 open Sutil.CoreElements
 open Browser.Types
 open Browser
+open Thoth.Json
 
 type Request = {
     url: string
@@ -19,12 +20,46 @@ type Deferred<'t> =
   | InProgress
   | Resolved of 't
 
-type AsyncOperationStatus<'t> =
+type AsyncOpStatus<'t> =
   | Started
   | Finished of 't
 
+let sampleJson = """
+{
+  "message": {
+    "affenpinscher": [],
+    "african": [],
+    "airedale": [],
+    "akita": [],
+    "appenzeller": [],
+    "australian": [
+      "kelpie",
+      "shepherd"
+    ]
+  }
+}
+"""
+
+type Breed =
+    { name: string
+      subBreeds: string list }
+
+type Breeds = Breed list
+
+type Message =
+    { message : Map<string, list<string>> }
+
+let transformJson (json: string) =
+    match Decode.Auto.fromString<Message> json with
+    | Ok parsedMap ->
+        parsedMap.message
+            |> Map.toList
+            |> List.map (fun (k, v) ->
+                         { name = k; subBreeds = v })
+    | Error err -> failwithf "Decoding error: %s" err
+
 type State = {
-    dogBreedsList : Deferred<Result<string, string>>
+    dogBreedsList : Deferred<Result<Breeds, string>>
     //DogBreedDetails : Deferred<Result<string, string>>
     countedNumber : int }
 
@@ -40,7 +75,7 @@ let getDogBreedsList (m: State) =
 type Msg =
     | Increment
     | Decrement
-    | LoadDogBreedsList of AsyncOperationStatus<Result<string, string>>
+    | LoadDogBreedsList of AsyncOpStatus<Result<Breeds, string>>
     //| LoadDogBreedsDetails of AsyncOperationStatus<Result<string, string>>
 
 let init () : State * Cmd<Msg> =
@@ -81,7 +116,7 @@ let update (msg : Msg) (state : State) : State * Cmd<Msg> =
             method = "GET"; body = "" }
         let responseMapper (response: Response) =
             if response.statusCode = 200
-            then LoadDogBreedsList (Finished (Ok response.body))
+            then LoadDogBreedsList (Finished (Ok (transformJson response.body)))
             else LoadDogBreedsList (Finished (Error "Could not load the content"))
         nextState, httpRequest request responseMapper
     | LoadDogBreedsList (Finished result) ->
@@ -91,10 +126,20 @@ let update (msg : Msg) (state : State) : State * Cmd<Msg> =
 let renderCounter n =
     text $"Counter = {n}"
 
-let renderDogBreedsList (x: Deferred<Result<string, string>>) =
+let renderBreed (breed: Breed) =
+    let subBreedsStr =
+        match breed.subBreeds with
+            | [] -> ""
+            | _ -> "(" + String.concat ", " breed.subBreeds + ")"
+    Html.div [
+        text $"{breed.name} {subBreedsStr}" ]
+
+let renderDogBreedsList (x: Deferred<Result<Breeds, string>>) =
     match x with
-        | Resolved result ->
-            text $"look! {result}"
+        | Resolved (Ok breeds) ->
+            Html.ul [
+                for breed in breeds do
+                Html.li [ renderBreed breed ] ]
         | _ -> text $""
 
 let view() =
