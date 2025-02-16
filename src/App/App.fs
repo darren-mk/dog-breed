@@ -24,33 +24,24 @@ type AsyncOpStatus<'t> =
   | Started
   | Finished of 't
 
-let sampleJson = """
-{
-  "message": {
-    "affenpinscher": [],
-    "african": [],
-    "airedale": [],
-    "akita": [],
-    "appenzeller": [],
-    "australian": [
-      "kelpie",
-      "shepherd"
-    ]
-  }
-}
-"""
+type BreedName = string
+
+type ImageUrl = string
 
 type Breed =
-    { name: string
+    { name: BreedName
       subBreeds: string list }
 
 type Breeds = Breed list
 
-type Message =
+type BreedsListRespBody =
     { message : Map<string, list<string>> }
 
-let transformJson (json: string) =
-    match Decode.Auto.fromString<Message> json with
+type BreedDetailRespBody =
+    { message: ImageUrl list }
+
+let transBreedsListJson (json: string) =
+    match Decode.Auto.fromString<BreedsListRespBody> json with
     | Ok parsedMap ->
         parsedMap.message
             |> Map.toList
@@ -58,10 +49,20 @@ let transformJson (json: string) =
                          { name = k; subBreeds = v })
     | Error err -> failwithf "Decoding error: %s" err
 
+let transBreedDetailJson (json: string) =
+    match Decode.Auto.fromString<BreedDetailRespBody> json with
+    | Ok parsedMap -> parsedMap.message
+    | Error err -> failwithf "Decoding error: %s" err
+
+type Page
+    = BreedsListPage
+    | BreedDetailPage of BreedName
+
 type State = {
     dogBreedsList : Deferred<Result<Breeds, string>>
     //DogBreedDetails : Deferred<Result<string, string>>
-    countedNumber : int }
+    countedNumber : int
+    currentPage : Page }
 
 let dogBreedsListUrl =
     "https://dog.ceo/api/breeds/list/all"
@@ -72,20 +73,25 @@ let getCounter (m: State) =
 let getDogBreedsList (m: State) =
     m.dogBreedsList
 
+let getCurrentPage (m: State) =
+    m.currentPage
+
 type Msg =
     | Increment
     | Decrement
+    | ChangePage of Page
     | LoadDogBreedsList of AsyncOpStatus<Result<Breeds, string>>
     //| LoadDogBreedsDetails of AsyncOperationStatus<Result<string, string>>
 
 let init () : State * Cmd<Msg> =
     { dogBreedsList = HasNotStartedYet
       //DogBreedDetails = HasNotStartedYet
-      countedNumber = 0 },
+      countedNumber = 0
+      currentPage = BreedsListPage },
       Cmd.ofMsg (LoadDogBreedsList Started)
 
 let httpRequest
-    (req: Request) (resph: Response -> 'Msg) : Cmd<'Msg> =
+    (req: Request) (handler: Response -> 'Msg) : Cmd<'Msg> =
     let command (dispatch: 'Msg -> unit) =
         let xhr = XMLHttpRequest.Create()
         xhr.``open``(method=req.method, url=req.url)
@@ -95,7 +101,7 @@ let httpRequest
                 let response = {
                     statusCode = xhr.status
                     body = xhr.responseText }
-                let messageToDispatch =  resph response
+                let messageToDispatch = handler response
                 dispatch messageToDispatch
         xhr.send(req.body)
     Cmd.ofEffect command
@@ -108,6 +114,8 @@ let update (msg : Msg) (state : State) : State * Cmd<Msg> =
     | Decrement ->
         { state with countedNumber = state.countedNumber - 1 }
         , Cmd.none
+    | ChangePage newPage ->
+        { state with currentPage = newPage }, Cmd.none
     | LoadDogBreedsList Started ->
         let nextState = {
             state with dogBreedsList = InProgress }
@@ -116,7 +124,7 @@ let update (msg : Msg) (state : State) : State * Cmd<Msg> =
             method = "GET"; body = "" }
         let responseMapper (response: Response) =
             if response.statusCode = 200
-            then LoadDogBreedsList (Finished (Ok (transformJson response.body)))
+            then LoadDogBreedsList (Finished (Ok (transBreedsListJson response.body)))
             else LoadDogBreedsList (Finished (Error "Could not load the content"))
         nextState, httpRequest request responseMapper
     | LoadDogBreedsList (Finished result) ->
@@ -126,36 +134,37 @@ let update (msg : Msg) (state : State) : State * Cmd<Msg> =
 let renderCounter n =
     text $"Counter = {n}"
 
-let renderBreed (breed: Breed) =
+let renderBreed dispatch (breed: Breed) =
     let subBreedsStr =
         match breed.subBreeds with
             | [] -> ""
             | _ -> "(" + String.concat ", " breed.subBreeds + ")"
+    let hf _ = dispatch (ChangePage (BreedDetailPage breed.name))
     Html.div [
-        text $"{breed.name} {subBreedsStr}" ]
+        Html.a [
+            Ev.onClick hf
+            text $"{breed.name} {subBreedsStr}" ] ]
 
-let renderDogBreedsList (x: Deferred<Result<Breeds, string>>) =
+let renderBreedsListPage dispatch (x: Deferred<Result<Breeds, string>>) =
     match x with
         | Resolved (Ok breeds) ->
             Html.ul [
                 for breed in breeds do
-                Html.li [ renderBreed breed ] ]
+                Html.li [ renderBreed dispatch breed ] ]
         | _ -> text $""
+
+let paginate (stateStore: IStore<State>) dispatch =
+    let f (state: State) =
+        match state.currentPage with
+        | BreedsListPage -> renderBreedsListPage dispatch state.dogBreedsList
+        | BreedDetailPage v -> text $"detail page for {v}"
+    Bind.el(stateStore,f)
 
 let view() =
     let state, dispatch =
-        () |> Store.makeElmish init update ignore
+        Store.makeElmish init update ignore ()
     Html.div [
         disposeOnUnmount [ state ]
-        Bind.el (state |> Store.map getDogBreedsList, renderDogBreedsList)
-        Html.br []
-        Bind.el (state |> Store.map getCounter, renderCounter)
-        Html.div [
-            Html.button [
-                Ev.onClick (fun _ -> dispatch Decrement)
-                text "-" ]
-            Html.button [
-                Ev.onClick (fun _ -> dispatch Increment)
-                text "+" ] ] ]
+        paginate state dispatch ]
 
 view() |> Program.mount
