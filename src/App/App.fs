@@ -59,7 +59,7 @@ type State = {
     breedImageUrlsListState : BreedImageUrlsListState
     currentPage : Page }
 
-let parseBreedsListJson (json: string) =
+let parseBreedsListJson (json: string) : Breeds =
     match Decode.Auto.fromString<BreedsListApiRespBody> json with
     | Ok parsedMap ->
         parsedMap.message
@@ -68,7 +68,7 @@ let parseBreedsListJson (json: string) =
                          { name = k; subBreeds = v })
     | Error err -> failwithf "Decoding error: %s" err
 
-let parseBreedImageUrlsJson (json: string) =
+let parseBreedImageUrlsJson (json: string) : ImageUrls =
     match Decode.Auto.fromString<BreedImageUrlsApiRespBody> json with
     | Ok parsedMap -> parsedMap.message
     | Error err -> failwithf "Decoding error: %s" err
@@ -158,9 +158,6 @@ let update (msg : Msg) (state : State) : State * Cmd<Msg> =
                 else let newPage = BreedDetailPage (breedName, newPageNumber)
                      { state with currentPage = newPage }, Cmd.none
 
-let renderCounter n =
-    text $"Counter = {n}"
-
 let renderBreed dispatch (breed: Breed) =
     let subBreedsStr =
         match breed.subBreeds with
@@ -172,7 +169,8 @@ let renderBreed dispatch (breed: Breed) =
             Ev.onClick hf
             text $"{breed.name} {subBreedsStr}" ] ]
 
-let renderBreedsListPage dispatch (data: BreedsInfoListState) =
+let renderBreedsListPage (dispatch: Dispatch<Msg>)
+    (data: BreedsInfoListState) =
     match data with
         | Resolved (Ok breeds) ->
             Html.ul [
@@ -181,15 +179,18 @@ let renderBreedsListPage dispatch (data: BreedsInfoListState) =
         | InProgress -> text $"Loading..."
         | _ -> text $"Try again"
 
-let renderImage imageUrl =
+let renderImage (imageUrl: ImageUrl) =
     Html.img [
         Attr.src imageUrl
         Attr.style [
             Css.height 150
             Css.width 150 ] ]
 
-let paginationNumbering dispatch imageUrls pageNumber =
-    let numOfSubPages = (List.length imageUrls) / 20
+let paginationNumbering
+    (dispatch: Dispatch<Msg>)
+    (imageUrls: ImageUrls)
+    (pageNumber: PageNumber) =
+    let numOfSubPages: int = (List.length imageUrls) / 20
     Html.div [
         Html.label [ text $"Pages: " ]
         for n in [0..numOfSubPages] do
@@ -201,12 +202,12 @@ let paginationNumbering dispatch imageUrls pageNumber =
                     then Css.fontWeightBold
                     else Css.fontWeightNormal ] ] ]
 
-let frameImages imageUrls (pageNumber: PageNumber) =
+let frameImages (imageUrls: ImageUrls) (pageNumber: PageNumber) =
     let endIndex =
         min ((pageNumber + 1) * 20) (List.length imageUrls - 1)
     let startIndex =
          pageNumber * 20
-    let selectedImageUrls =
+    let selectedImageUrls: ImageUrls =
         imageUrls |> List.take endIndex
         |> List.skip startIndex
     Html.div [
@@ -214,7 +215,7 @@ let frameImages imageUrls (pageNumber: PageNumber) =
            Css.displayFlex
            Css.flexWrapWrap
            Css.flexDirectionRow ]
-       for imageUrl in selectedImageUrls do
+       for imageUrl: ImageUrl in selectedImageUrls do
            renderImage imageUrl ]
 
 let renderBreedImages (dispatch: Dispatch<Msg>)
@@ -232,7 +233,9 @@ let renderBreedImages (dispatch: Dispatch<Msg>)
         | InProgress -> text $"Loading... "
         | _ -> text $"Try again"
 
-let detailPage dispatch imageUrlsState pageNumber  =
+let detailPage (dispatch: Dispatch<Msg>)
+    (imageUrlsState: BreedImageUrlsListState)
+    (pageNumber: PageNumber)  =
     let hf _ = dispatch (ChangePage BreedsListPage)
     Html.div [
         Html.button [
@@ -251,10 +254,10 @@ let paginate (stateStore: IStore<State>) (dispatch: Dispatch<Msg>) =
     Bind.el(stateStore,f)
 
 let view() =
-    let state, dispatch =
+    let (stateStore: IStore<State>), (dispatch: Dispatch<Msg>) =
         Store.makeElmish init update ignore ()
     Html.div [
-        disposeOnUnmount [ state ]
-        paginate state dispatch ]
+        disposeOnUnmount [ stateStore ]
+        paginate stateStore dispatch ]
 
 view() |> Program.mount
