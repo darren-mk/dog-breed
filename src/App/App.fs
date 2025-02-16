@@ -42,9 +42,11 @@ type BreedsListApiRespBody =
 type BreedImageUrlsApiRespBody =
     { message: string list }
 
+type PageNumber = int
+
 type Page
     = BreedsListPage
-    | BreedDetailPage of BreedName
+    | BreedDetailPage of BreedName * PageNumber
 
 type BreedsInfoListState =
     Deferred<Result<Breeds, string>>
@@ -87,6 +89,7 @@ type Msg =
     | ChangePage of Page
     | LoadDogBreedsList of AsyncOpStatus<Result<Breeds, string>>
     | LoadBreedImages of BreedName * AsyncOpStatus<Result<ImageUrls, string>>
+    | TurnSubPage of PageNumber
 
 let init () : State * Cmd<Msg> =
     { breedsInfoListState = HasNotStartedYet
@@ -115,7 +118,7 @@ let update (msg : Msg) (state : State) : State * Cmd<Msg> =
         let cmd : Cmd<Msg> =
             match newPage with
                 | BreedsListPage -> Cmd.ofMsg (LoadDogBreedsList Started)
-                | BreedDetailPage breedName ->
+                | BreedDetailPage (breedName, _) ->
                     Cmd.ofMsg (LoadBreedImages (breedName, Started))
         { state with currentPage = newPage }, cmd
     | LoadDogBreedsList Started ->
@@ -146,6 +149,14 @@ let update (msg : Msg) (state : State) : State * Cmd<Msg> =
     | LoadBreedImages (breedName, Finished result) ->
         let nextState = { state with breedImageUrlsListState = Resolved result }
         nextState, Cmd.none
+    | TurnSubPage newPageNumber ->
+        match state.currentPage with
+            | BreedsListPage -> state, Cmd.none
+            | BreedDetailPage (breedName, pageNumber) ->
+                if newPageNumber = pageNumber
+                then state, Cmd.none
+                else let newPage = BreedDetailPage (breedName, newPageNumber)
+                     { state with currentPage = newPage }, Cmd.none
 
 let renderCounter n =
     text $"Counter = {n}"
@@ -155,19 +166,20 @@ let renderBreed dispatch (breed: Breed) =
         match breed.subBreeds with
             | [] -> ""
             | _ -> "(" + String.concat ", " breed.subBreeds + ")"
-    let hf _ = dispatch (ChangePage (BreedDetailPage breed.name))
+    let hf _ = dispatch (ChangePage (BreedDetailPage (breed.name, 0)))
     Html.div [
         Html.a [
             Ev.onClick hf
             text $"{breed.name} {subBreedsStr}" ] ]
 
-let renderBreedsListPage dispatch (data: Deferred<Result<Breeds, string>>) =
+let renderBreedsListPage dispatch (data: BreedsInfoListState) =
     match data with
         | Resolved (Ok breeds) ->
             Html.ul [
                 for breed in breeds do
                 Html.li [ renderBreed dispatch breed ] ]
-        | _ -> text $""
+        | InProgress -> text $"Loading..."
+        | _ -> text $"Try again"
 
 let renderImage imageUrl =
     Html.img [
@@ -176,31 +188,66 @@ let renderImage imageUrl =
             Css.height 150
             Css.width 150 ] ]
 
-let frameImages imageUrls =
+let paginationNumbering dispatch imageUrls pageNumber =
+    let numOfSubPages = (List.length imageUrls) / 20
+    Html.div [
+        Html.label [ text $"Pages: " ]
+        for n in [0..numOfSubPages] do
+            Html.a [
+                text $" {n+1} "
+                Ev.onClick (fun _ -> dispatch (Msg.TurnSubPage n))
+                Attr.style [
+                    if n = pageNumber
+                    then Css.fontWeightBold
+                    else Css.fontWeightNormal ] ] ]
+
+let frameImages imageUrls (pageNumber: PageNumber) =
+    let endIndex =
+        min ((pageNumber + 1) * 20) (List.length imageUrls - 1)
+    let startIndex =
+         pageNumber * 20
+    let selectedImageUrls =
+        imageUrls |> List.take endIndex
+        |> List.skip startIndex
     Html.div [
        Attr.style [
            Css.displayFlex
            Css.flexWrapWrap
            Css.flexDirectionRow ]
-       for imageUrl in imageUrls do
+       for imageUrl in selectedImageUrls do
            renderImage imageUrl ]
 
-let renderBreedImages dispatch (data: BreedImageUrlsListState) =
+let renderBreedImages (dispatch: Dispatch<Msg>)
+    (data: BreedImageUrlsListState)
+    (pageNumber: PageNumber) =
     match data with
         | Resolved (Ok imageUrls) ->
             match imageUrls with
-                | [] -> text $"No image for this breed"
-                | _ -> frameImages imageUrls
+                | [] ->
+                    text $"No image for this breed"
+                | _ ->
+                    Html.div [
+                        paginationNumbering dispatch imageUrls pageNumber
+                        frameImages imageUrls pageNumber ]
         | InProgress -> text $"Loading... "
         | _ -> text $"Try again"
 
-let paginate (stateStore: IStore<State>) dispatch =
+let detailPage dispatch imageUrlsState pageNumber  =
+    let hf _ = dispatch (ChangePage BreedsListPage)
+    Html.div [
+        Html.button [
+            text $"<- Back to breed list"
+            Ev.onClick hf ]
+        Html.br []
+        renderBreedImages dispatch imageUrlsState pageNumber ]
+
+let paginate (stateStore: IStore<State>) (dispatch: Dispatch<Msg>) =
     let f (state: State) =
         match state.currentPage with
         | BreedsListPage ->
             renderBreedsListPage dispatch state.breedsInfoListState
-        | BreedDetailPage v ->
-            renderBreedImages dispatch state.breedImageUrlsListState
+        | BreedDetailPage (_, pn) ->
+            detailPage dispatch state.breedImageUrlsListState pn
     Bind.el(stateStore,f)
 
 let view() =
